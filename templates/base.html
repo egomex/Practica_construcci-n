@@ -1,0 +1,44 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}LabVision — Conteo de Personas{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{% static 'css/dashboard.css' %}" />
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="nav-brand">
+      <span class="nav-icon">🔬</span>
+      <span class="nav-title">LabVision</span>
+      <span class="nav-sub">Sistema de Conteo</span>
+    </div>
+    <div class="nav-links">
+      <a href="{% url 'personas:dashboard' %}" class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
+        📹 Monitor
+      </a>
+      <a href="{% url 'personas:historial' %}" class="nav-link {% if request.resolver_match.url_name == 'historial' %}active{% endif %}">
+        📊 Historial
+      </a>
+    </div>
+    <div class="nav-status" id="nav-status">
+      <span class="status-dot"></span>
+      <span class="status-text">En línea</span>
+    </div>
+  </nav>
+
+  <main class="main-content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <p>LabVision © 2024 — Universidad Estatal de Milagro · Análisis y Diseño de Software</p>
+  </footer>
+
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

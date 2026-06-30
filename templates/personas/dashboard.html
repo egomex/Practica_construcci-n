@@ -1,0 +1,327 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Monitor en Vivo — LabVision{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Monitor de Laboratorio</h1>
+  <p class="page-sub">Detección de personas en tiempo real usando OpenCV · HOG + SVM</p>
+</div>
+
+<div class="grid-layout">
+
+  <!-- VIDEO EN VIVO -->
+  <section class="card card-video">
+    <div class="card-header">
+      <h2>📹 Cámara en Vivo</h2>
+      <div class="controls-row">
+        <button class="btn btn-green" id="btn-iniciar" onclick="iniciarStream()">▶ Iniciar</button>
+        <button class="btn btn-red" id="btn-detener" onclick="detenerStream()" disabled>⏹ Detener</button>
+        <button class="btn btn-blue" id="btn-snapshot" onclick="tomarSnapshot()" disabled>📸 Captura</button>
+      </div>
+    </div>
+    <div class="video-container">
+      <img id="video-feed" src="" alt="Stream de cámara" class="video-feed hidden" />
+      <div class="video-placeholder" id="video-placeholder">
+        <div class="placeholder-content">
+          <span class="placeholder-icon">📷</span>
+          <p>Presiona <strong>Iniciar</strong> para activar la cámara</p>
+        </div>
+      </div>
+      <!-- Overlay contador -->
+      <div class="count-overlay" id="count-overlay" style="display:none;">
+        <span class="count-label">Personas</span>
+        <span class="count-number" id="overlay-count">0</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- MÉTRICAS EN TIEMPO REAL -->
+  <section class="card card-metrics">
+    <div class="card-header">
+      <h2>📊 Métricas</h2>
+    </div>
+    <div class="metrics-grid">
+      <div class="metric-box metric-primary">
+        <span class="metric-value" id="metric-actual">—</span>
+        <span class="metric-label">Actuales</span>
+      </div>
+      <div class="metric-box">
+        <span class="metric-value" id="metric-max">{{ ultimos_registros.0.cantidad_personas|default:"—" }}</span>
+        <span class="metric-label">Último registro</span>
+      </div>
+      <div class="metric-box">
+        <span class="metric-value" id="metric-total">{{ total_registros }}</span>
+        <span class="metric-label">Snapshots</span>
+      </div>
+    </div>
+
+    <!-- Barra de ocupación -->
+    <div class="ocupacion-section">
+      <div class="ocupacion-header">
+        <span>Ocupación del laboratorio</span>
+        <span id="ocupacion-pct">—%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+      </div>
+      <div class="ocupacion-labels">
+        <span>0</span>
+        <span>Capacidad: 30 personas</span>
+      </div>
+    </div>
+
+    <!-- Estado -->
+    <div class="alert-box" id="alert-box">
+      <span id="alert-icon">ℹ️</span>
+      <span id="alert-text">Cámara inactiva. Presiona Iniciar.</span>
+    </div>
+  </section>
+
+  <!-- SUBIR IMAGEN -->
+  <section class="card card-upload">
+    <div class="card-header">
+      <h2>🖼️ Analizar Imagen</h2>
+    </div>
+    <div class="upload-zone" id="upload-zone" ondrop="handleDrop(event)" ondragover="event.preventDefault()">
+      <input type="file" id="file-input" accept="image/*" onchange="analizarImagen()" hidden />
+      <div class="upload-content" onclick="document.getElementById('file-input').click()">
+        <span class="upload-icon">⬆️</span>
+        <p>Arrastra una imagen o <strong>haz clic aquí</strong></p>
+        <small>JPG, PNG, WEBP — máx 10MB</small>
+      </div>
+    </div>
+    <div id="resultado-imagen" class="resultado-imagen hidden">
+      <img id="img-resultado" src="" alt="Resultado" />
+      <div class="resultado-info">
+        <span id="resultado-cantidad" class="resultado-num">0</span>
+        <span>personas detectadas</span>
+      </div>
+    </div>
+    <div id="upload-loader" class="loader hidden">Procesando imagen…</div>
+  </section>
+
+  <!-- ÚLTIMOS REGISTROS -->
+  <section class="card card-history">
+    <div class="card-header">
+      <h2>🕐 Últimos Registros</h2>
+      <a href="{% url 'personas:historial' %}" class="btn btn-ghost">Ver todos →</a>
+    </div>
+    <div class="history-list" id="history-list">
+      {% for reg in ultimos_registros %}
+      <div class="history-item">
+        <div class="history-info">
+          <span class="history-time">{{ reg.timestamp|date:"d/m/Y H:i:s" }}</span>
+          <span class="history-source">{{ reg.get_fuente_display }}</span>
+        </div>
+        <span class="history-count {% if reg.cantidad_personas > 20 %}count-high{% elif reg.cantidad_personas > 10 %}count-medium{% else %}count-low{% endif %}">
+          {{ reg.cantidad_personas }} 👤
+        </span>
+      </div>
+      {% empty %}
+      <p class="empty-state">Sin registros aún. Toma un snapshot.</p>
+      {% endfor %}
+    </div>
+  </section>
+
+</div>
+
+<!-- Modal resultado snapshot -->
+<div class="modal-overlay" id="modal" onclick="cerrarModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="cerrarModal()">✕</button>
+    <h3 id="modal-title">Resultado del Snapshot</h3>
+    <img id="modal-img" src="" alt="Captura" />
+    <p id="modal-info"></p>
+  </div>
+</div>
+{% endblock %}
+
+
+{% block extra_js %}
+<script>
+  const VIDEO_URL = "{% url 'personas:video_feed' %}";
+  const SNAPSHOT_URL = "{% url 'personas:snapshot' %}";
+  const ANALIZAR_URL = "{% url 'personas:analizar' %}";
+  const DETENER_URL = "{% url 'personas:detener' %}";
+  const CSRF_TOKEN = "{{ csrf_token }}";
+
+  let streamActivo = false;
+  let pollingInterval = null;
+
+  // ── STREAM ──────────────────────────────────
+  function iniciarStream() {
+    const feed = document.getElementById('video-feed');
+    const placeholder = document.getElementById('video-placeholder');
+
+    feed.src = VIDEO_URL + '?t=' + Date.now();
+    feed.classList.remove('hidden');
+    placeholder.style.display = 'none';
+    document.getElementById('count-overlay').style.display = 'flex';
+
+    streamActivo = true;
+    document.getElementById('btn-iniciar').disabled = true;
+    document.getElementById('btn-detener').disabled = false;
+    document.getElementById('btn-snapshot').disabled = false;
+
+    actualizarAlerta('🟢', 'Cámara activa — Detectando personas…', 'green');
+
+    // Poll estadísticas cada 3s
+    pollingInterval = setInterval(actualizarMetricas, 3000);
+    actualizarMetricas();
+  }
+
+  function detenerStream() {
+    fetch(DETENER_URL).then(() => {
+      const feed = document.getElementById('video-feed');
+      feed.src = '';
+      feed.classList.add('hidden');
+      document.getElementById('video-placeholder').style.display = 'flex';
+      document.getElementById('count-overlay').style.display = 'none';
+
+      streamActivo = false;
+      document.getElementById('btn-iniciar').disabled = false;
+      document.getElementById('btn-detener').disabled = true;
+      document.getElementById('btn-snapshot').disabled = true;
+
+      clearInterval(pollingInterval);
+      actualizarAlerta('ℹ️', 'Cámara detenida.', '');
+      document.getElementById('metric-actual').textContent = '—';
+      document.getElementById('ocupacion-pct').textContent = '—%';
+      document.getElementById('progress-fill').style.width = '0%';
+    });
+  }
+
+  // ── SNAPSHOT ────────────────────────────────
+  function tomarSnapshot() {
+    const btn = document.getElementById('btn-snapshot');
+    btn.disabled = true;
+    btn.textContent = '⏳ Procesando…';
+
+    fetch(SNAPSHOT_URL)
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) {
+          actualizarAlerta('❌', data.error, 'red');
+          return;
+        }
+        // Mostrar en modal
+        document.getElementById('modal-img').src = 'data:image/jpeg;base64,' + data.imagen_b64;
+        document.getElementById('modal-title').textContent = `Snapshot — ${data.cantidad} persona(s)`;
+        document.getElementById('modal-info').textContent = `Capturado: ${data.timestamp}`;
+        document.getElementById('modal').classList.add('visible');
+
+        // Actualizar métricas
+        document.getElementById('metric-actual').textContent = data.cantidad;
+        document.getElementById('overlay-count').textContent = data.cantidad;
+        actualizarOcupacion(data.cantidad);
+
+        // Añadir al historial local
+        agregarItemHistorial(data.cantidad, data.timestamp, 'Cámara en vivo');
+      })
+      .catch(() => actualizarAlerta('❌', 'Error al tomar snapshot.', 'red'))
+      .finally(() => {
+        btn.disabled = false;
+        btn.textContent = '📸 Captura';
+      });
+  }
+
+  // ── IMAGEN SUBIDA ───────────────────────────
+  function analizarImagen() {
+    const file = document.getElementById('file-input').files[0];
+    if (!file) return;
+
+    const loader = document.getElementById('upload-loader');
+    const resultado = document.getElementById('resultado-imagen');
+
+    loader.classList.remove('hidden');
+    resultado.classList.add('hidden');
+
+    const formData = new FormData();
+    formData.append('imagen', file);
+    formData.append('csrfmiddlewaretoken', CSRF_TOKEN);
+
+    fetch(ANALIZAR_URL, { method: 'POST', body: formData })
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('img-resultado').src = 'data:image/jpeg;base64,' + data.imagen_b64;
+        document.getElementById('resultado-cantidad').textContent = data.cantidad;
+        resultado.classList.remove('hidden');
+        agregarItemHistorial(data.cantidad, data.timestamp, 'Imagen subida');
+      })
+      .catch(() => alert('Error al procesar la imagen.'))
+      .finally(() => loader.classList.add('hidden'));
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) {
+      const input = document.getElementById('file-input');
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      analizarImagen();
+    }
+  }
+
+  // ── MÉTRICAS ────────────────────────────────
+  function actualizarMetricas() {
+    fetch("{% url 'personas:estadisticas' %}")
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('metric-total').textContent = data.total_snapshots;
+        if (data.registros.length > 0) {
+          const ultimo = data.registros[data.registros.length - 1];
+          document.getElementById('metric-actual').textContent = ultimo.cantidad;
+          document.getElementById('overlay-count').textContent = ultimo.cantidad;
+          actualizarOcupacion(ultimo.cantidad);
+        }
+      });
+  }
+
+  function actualizarOcupacion(cantidad) {
+    const cap = 30;
+    const pct = Math.min(Math.round((cantidad / cap) * 100), 100);
+    document.getElementById('ocupacion-pct').textContent = pct + '%';
+    const fill = document.getElementById('progress-fill');
+    fill.style.width = pct + '%';
+    fill.style.background = pct > 80 ? '#ef4444' : pct > 50 ? '#f59e0b' : '#22c55e';
+
+    if (pct > 80) actualizarAlerta('⚠️', `Laboratorio casi lleno (${cantidad}/${cap})`, 'red');
+    else actualizarAlerta('🟢', `Ocupación normal (${cantidad}/${cap} personas)`, 'green');
+  }
+
+  function actualizarAlerta(icon, texto, tipo) {
+    document.getElementById('alert-icon').textContent = icon;
+    document.getElementById('alert-text').textContent = texto;
+    const box = document.getElementById('alert-box');
+    box.className = 'alert-box' + (tipo ? ' alert-' + tipo : '');
+  }
+
+  // ── HISTORIAL ───────────────────────────────
+  function agregarItemHistorial(cantidad, timestamp, fuente) {
+    const list = document.getElementById('history-list');
+    const empty = list.querySelector('.empty-state');
+    if (empty) empty.remove();
+
+    const cls = cantidad > 20 ? 'count-high' : cantidad > 10 ? 'count-medium' : 'count-low';
+    const item = document.createElement('div');
+    item.className = 'history-item new-item';
+    item.innerHTML = `
+      <div class="history-info">
+        <span class="history-time">${timestamp}</span>
+        <span class="history-source">${fuente}</span>
+      </div>
+      <span class="history-count ${cls}">${cantidad} 👤</span>`;
+    list.prepend(item);
+    setTimeout(() => item.classList.remove('new-item'), 600);
+  }
+
+  // ── MODAL ───────────────────────────────────
+  function cerrarModal() {
+    document.getElementById('modal').classList.remove('visible');
+  }
+</script>
+{% endblock %}

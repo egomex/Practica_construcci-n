@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Historial — LabVision{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Historial de Registros</h1>
+  <p class="page-sub">Todos los conteos registrados por el sistema</p>
+</div>
+
+<div class="card" style="max-width:900px; margin:0 auto;">
+  <div class="card-header">
+    <h2>📋 Registros ({{ registros.count }})</h2>
+    <a href="{% url 'personas:dashboard' %}" class="btn btn-blue">← Volver al Monitor</a>
+  </div>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Fecha y Hora</th>
+        <th>Personas</th>
+        <th>Fuente</th>
+        <th>Captura</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for reg in registros %}
+      <tr>
+        <td>{{ forloop.counter }}</td>
+        <td>{{ reg.timestamp|date:"d/m/Y H:i:s" }}</td>
+        <td>
+          <span class="badge {% if reg.cantidad_personas > 20 %}badge-red{% elif reg.cantidad_personas > 10 %}badge-yellow{% else %}badge-green{% endif %}">
+            {{ reg.cantidad_personas }} 👤
+          </span>
+        </td>
+        <td>{{ reg.get_fuente_display }}</td>
+        <td>
+          {% if reg.captura %}
+          <a href="{{ reg.captura.url }}" target="_blank" class="btn btn-ghost btn-sm">Ver imagen</a>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="5" class="empty-state">Sin registros aún.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
